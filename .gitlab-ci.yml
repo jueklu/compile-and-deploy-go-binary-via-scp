@@ -1,0 +1,52 @@
+# Variables that will be reused in the pipeline
+variables:
+  DEPLOY_IP: "192.168.70.6"  # Deployment server IP
+  DEPLOY_USER: "gitlab-deployment"  # Deployment server SSH user
+  OUTPUT_DIR: go-bin  # Directory to store the compiled binary
+  OUTPUT_NAME: $OUTPUT_DIR/example-binary_${CI_COMMIT_REF_SLUG} # Name of the binary (same as the project name)
+
+
+# Pipeline stages
+stages:
+  - compile
+  - deploy
+
+
+### Compile Job
+compile:
+  image: golang:latest
+  stage: compile
+  before_script:  # Initialize the Go module environment
+    # Create directory for the compiled binary
+    - mkdir -p $OUTPUT_DIR
+    # Initialize a Go module if it doesn't already exist
+    - go mod init example-project || true
+    # Download dependencies (even if there are none, it's safe to run)
+    - go mod tidy
+  script:  # Compile the Go binary and store it in the specified output directory
+    # Compile the Go program and output the binary to $OUTPUT_NAME
+    - go build -o $OUTPUT_NAME ./main.go
+    # List binary in the logs
+    - ls -la $OUTPUT_DIR
+  artifacts:
+    paths:
+      # Save the binary as an artifact for the next stage
+      - $OUTPUT_NAME
+  only:
+    - main
+
+
+### Deploy Job
+deploy:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    # Update the package index, install the OpenSSH client for SSH connections
+    - apk update && apk add openssh-client
+    # If the private SSH key file ($ID_RSA) exists, set secure permissions (read/write for the owner only)
+    - if [ -f "$ID_RSA" ]; then chmod og= $ID_RSA; fi
+  script:
+    # Copy the binary to the target Linux server
+    - scp -i $ID_RSA -o StrictHostKeyChecking=no $OUTPUT_NAME $DEPLOY_USER@$DEPLOY_IP:/go-binary
+  only:
+    - main
